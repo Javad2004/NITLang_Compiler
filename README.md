@@ -24,13 +24,13 @@ README.md
 
 ```mermaid
 flowchart LR
-    A[Source Code (.txt)] --> B[Lexer - Tokenizer.py]
-    B --> C[Parser - Parser.py]
-    C --> D[AST Tree - AST.py]
-    D --> E[Semantic Analyzer - SemanticAnalysis.py]
-    E --> F[Code Generator - CodeGenerator.py]
-    F --> G[TSVM Assembly - output.tsvm]
-    G --> H[TSVM Virtual Machine - tsvm.py]
+    A[Source Code TXT] --> B[Lexer Tokenizer]
+    B --> C[Parser]
+    C --> D[AST Tree]
+    D --> E[Semantic Analysis]
+    E --> F[Code Generator]
+    F --> G[TSVM Assembly]
+    G --> H[TSVM Virtual Machine]
 ```
 
 ---
