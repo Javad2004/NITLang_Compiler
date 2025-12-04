@@ -136,7 +136,7 @@ pip install ply
 
 ## 2️⃣ Compile a NITLang program
 ```
-python Parser.py test.txt
+python Parser.py
 ```
 
 Output:  
