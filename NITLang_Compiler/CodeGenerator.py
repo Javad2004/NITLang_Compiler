@@ -30,6 +30,58 @@ class CodeGenerator:
     def new_label(self):
         self.label_count += 1
         return f"L{self.label_count}"
+    
+    def _is_string_expr(self, expr):
+        """Heuristic: does this expression evaluate to a string?"""
+        if isinstance(expr, str):
+            if expr.startswith('"') or expr.startswith("'") or expr.startswith('"""'):
+                return True
+            if expr in self.var_map and self.var_map[expr].get('var_type') == 'string':
+                return True
+            if expr in self.global_var_map and self.global_var_map[expr].get('var_type') == 'string':
+                return True
+        return False
+
+    def _contains_string_expr(self, node):
+        """Does this subtree contain any expression that is (definitely) a string?"""
+        if node is None:
+            return False
+
+        if self._is_string_expr(node):
+            return True
+
+        if isinstance(node, BinaryOperation):
+            return self._contains_string_expr(node.left) or self._contains_string_expr(node.right)
+
+        if isinstance(node, ASTNode):
+            for v in vars(node).values():
+                if isinstance(v, ASTNode) and self._contains_string_expr(v):
+                    return True
+                if isinstance(v, list):
+                    for e in v:
+                        if isinstance(e, ASTNode) and self._contains_string_expr(e):
+                            return True
+
+        return False
+
+    def _flatten_concat(self, expr, parts):
+        """
+        Flatten a + chain that involves strings into a list of parts.
+        """
+        if isinstance(expr, BinaryOperation) and expr.op == '+' and self._contains_string_expr(expr):
+            self._flatten_concat(expr.left, parts)
+            self._flatten_concat(expr.right, parts)
+        else:
+            parts.append(expr)
+
+    def _emit_print_value(self, expr):
+        value_reg, type_str = self.visit(expr)
+        if type_str == 'vector':
+            self.emit(f"call vprint, r{value_reg}")
+        elif type_str == 'string':
+            self.emit(f"call sprint, r{value_reg}")
+        else:
+            self.emit(f"call iput, r{value_reg}")
 
     def get_var_addr_reg(self, name):
         """Returns a register holding the *address* of a variable"""
@@ -241,24 +293,50 @@ class CodeGenerator:
     def visit_BinaryOperation(self, node):
         left_reg, left_type = self.visit(node.left)
         right_reg, right_type = self.visit(node.right)
+
+        if node.op == '+':
+            if left_type == 'string' or right_type == 'string':
+                
+                if left_type in ('int', 'bool'):
+                    new_reg = self.new_register()
+                    self.emit(f"call itos, r{new_reg}, r{left_reg}")
+                    left_reg = new_reg
+                elif left_type == 'vector':
+                    new_reg = self.new_register()
+                    self.emit(f"call vtos, r{new_reg}, r{left_reg}")
+                    left_reg = new_reg
+                
+                if right_type in ('int', 'bool'):
+                    new_reg = self.new_register()
+                    self.emit(f"call itos, r{new_reg}, r{right_reg}")
+                    right_reg = new_reg
+                elif right_type == 'vector':
+                    new_reg = self.new_register()
+                    self.emit(f"call vtos, r{new_reg}, r{right_reg}")
+                    right_reg = new_reg
+                
+                result_reg = self.new_register()
+                self.emit(f"call sconcat, r{result_reg}, r{left_reg}, r{right_reg}")
+                return result_reg, "string"
+
         result_reg = self.new_register()
-        
+
         op_map = {
             '+': 'add', '-': 'sub', '*': 'mul', '/': 'div', '%': 'mod',
             '<': 'cmp<', '<=': 'cmp<=', '>': 'cmp>', '>=': 'cmp>=',
             '==': 'cmp==', '!=': 'cmp!=', '&&': 'and', '||': 'or'
         }
-        
+
         if node.op not in op_map:
-             self.emit(f"# Error: Unknown binary operator {node.op}")
-             return result_reg, "unknown"
-             
+            self.emit(f"# Error: Unknown binary operator {node.op}")
+            return result_reg, "unknown"
+
         self.emit(f"{op_map[node.op]} r{result_reg}, r{left_reg}, r{right_reg}")
-        
+
         return_type = "int"
         if node.op in ['<', '<=', '>', '>=', '==', '!=', '&&', '||']:
             return_type = "bool"
-            
+
         return result_reg, return_type
 
     def visit_SingleOperation(self, node):
@@ -279,20 +357,28 @@ class CodeGenerator:
 
     def visit_FunctionCallNode(self, node):
         if node.name == 'print':
-            arg_reg, arg_type = self.visit(node.params[0])
-            
-            if arg_type == 'vector':
-                self.emit(f"call vprint, r{arg_reg}")
-            else:
-                self.emit(f"call iput, r{arg_reg}")
+            if node.params:
+                expr = node.params[0]
+                if isinstance(expr, BinaryOperation) and self._contains_string_expr(expr):
+                    parts = []
+                    self._flatten_concat(expr, parts)
+                    for part in parts:
+                        self._emit_print_value(part)
+                else:
+                    self._emit_print_value(expr)
+
+            self.emit("call nl")
             return 0, "null"
-            
+
         elif node.name == 'scan':
             result_reg = self.new_register()
-            self.emit(f"call iget, r{result_reg}"); return result_reg, "int"
+            self.emit(f"call iget, r{result_reg}")
+            return result_reg, "int"
+
         elif node.name == 'exit':
             code_reg, _ = self.visit(node.params[0])
-            self.emit(f"call exit, r{code_reg}"); return 0, "noreturn"
+            self.emit(f"call exit, r{code_reg}")
+            return 0, "noreturn"
 
         regs_to_save = [i for i in range(1, self.next_register)]
         for r in regs_to_save:
@@ -484,14 +570,19 @@ class CodeGenerator:
     def visit_ScanNode(self, node):
         result_reg = self.new_register()
         self.emit(f"call iget, r{result_reg}"); return result_reg, "int"
+
     def visit_PrintNode(self, node):
-        value_reg, type_str = self.visit(node.value)
-        if type_str == 'vector':
-            self.emit(f"call vprint, r{value_reg}")
-        elif type_str == 'string':
-            self.emit(f"call sprint, r{value_reg}")
+        value = node.value
+
+        if isinstance(value, BinaryOperation) and self._contains_string_expr(value):
+            parts = []
+            self._flatten_concat(value, parts)
+            for part in parts:
+                self._emit_print_value(part)
         else:
-            self.emit(f"call iput, r{value_reg}")
+            self._emit_print_value(value)
+
+        self.emit("call nl")
         return 0, "null"
         
     def visit_ListNode(self, node):
@@ -538,7 +629,6 @@ class CodeGenerator:
             
         return elem_ptr_reg, "vector"
 
-    
     def visit_LambdaNode(self, node):
         self.emit("# Error: Lambda visited directly")
         return 0, "function"

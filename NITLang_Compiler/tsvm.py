@@ -1,5 +1,4 @@
 import sys
-import re
 import shlex
 
 class TSVM:
@@ -218,19 +217,64 @@ class TSVM:
 
         elif op == 'call':
             target = inst[1]
+
             if target == 'iput':
-                print(self.get_val(inst[2]))
-            
+                val = self.get_val(inst[2])
+                if val >= 20000 and val < len(self.memory):
+                    ptr = val
+                    while True:
+                        if ptr >= len(self.memory): break
+                        char_val = self.memory[ptr]
+                        if char_val == 0 or char_val is None: break
+                        print(chr(char_val), end="")
+                        ptr += 1
+                else:
+                    print(val, end="")
+
             elif target == 'sprint':
                 ptr = self.get_val(inst[2])
                 while True:
                     val = self.memory[ptr]
-                    if val == 0: 
-                        break
-                    if val is None:
+                    if val == 0 or val is None:
                         break
                     print(chr(val), end="")
                     ptr += 1
+
+            elif target == 'vprint':
+                ptr = self.get_val(inst[2])
+                size_addr = ptr - 1
+                if size_addr < 0 or size_addr >= len(self.memory):
+                    print("Runtime Error: Invalid vector pointer")
+                    sys.exit(1)
+                size = self.memory[size_addr]
+                if size is None:
+                    print("Runtime Error: Vector corrupted")
+                    sys.exit(1)
+
+                print("[", end="")
+                for i in range(size):
+                    elem_addr = ptr + i
+                    val = self.memory[elem_addr]
+                    if val is None:
+                        print(f"\nRuntime Error: Vector index {i} is uninitialized")
+                        sys.exit(1)
+                    
+                    if val >= 20000 and val < len(self.memory):
+                        str_ptr = val
+                        while True:
+                            if str_ptr >= len(self.memory): break
+                            char_val = self.memory[str_ptr]
+                            if char_val == 0 or char_val is None: break
+                            print(chr(char_val), end="")
+                            str_ptr += 1
+                    else:
+                        print(val, end="")
+                        
+                    if i < size - 1:
+                        print(",", end="")
+                print("]", end="")
+
+            elif target == 'nl':
                 print()
 
             elif target == 'iget':
@@ -240,8 +284,10 @@ class TSVM:
                 except ValueError:
                     print("Runtime Error: Invalid input")
                     sys.exit(1)
+
             elif target == 'exit':
                 sys.exit(self.get_val(inst[2]))
+
             elif target == 'mem':
                 dst_reg = inst[2]
                 size = self.get_val(inst[3])
@@ -249,39 +295,16 @@ class TSVM:
                 self.heap_ptr += size
                 self.set_reg(dst_reg, ptr)
                 for i in range(ptr, ptr + size):
-                    self.memory[i] = None 
-
-            elif target == 'vprint':
-                ptr = self.get_val(inst[2])
-                size_addr = ptr - 1
-                if size_addr < 0 or size_addr >= len(self.memory):
-                        print("Runtime Error: Invalid vector pointer")
-                        sys.exit(1)
-                size = self.memory[size_addr]
-                if size is None:
-                        print("Runtime Error: Vector corrupted")
-                        sys.exit(1)
-                
-                print("[", end="")
-                for i in range(size):
-                    elem_addr = ptr + i
-                    val = self.memory[elem_addr]
-                    if val is None:
-                        print(f"\nRuntime Error: Vector index {i} is uninitialized")
-                        sys.exit(1)
-                    print(val, end="")
-                    if i < size - 1:
-                        print(",", end="")
-                print("]")
+                    self.memory[i] = None
 
             elif target == 'vget':
                 dst_reg = inst[2]
                 ptr = self.get_val(inst[3])
                 idx = self.get_val(inst[4])
                 
-                if ptr < 10000: 
-                     print("Runtime Error: Invalid vector pointer")
-                     sys.exit(1)
+                if ptr < 10000:
+                    print("Runtime Error: Invalid vector pointer")
+                    sys.exit(1)
 
                 size_addr = ptr - 1
                 size = self.memory[size_addr]
@@ -298,7 +321,82 @@ class TSVM:
                     sys.exit(1)
 
                 self.set_reg(dst_reg, val)
+            
+            elif target == 'itos':
+                dst_reg = inst[2]
+                val = self.get_val(inst[3])
+                res_str = str(val)
+                ptr = self.heap_ptr
+                self.set_reg(dst_reg, ptr)
+                for char in res_str:
+                    self.memory[self.heap_ptr] = ord(char)
+                    self.heap_ptr += 1
+                self.memory[self.heap_ptr] = 0
+                self.heap_ptr += 1
 
+            elif target == 'vtos':
+                dst_reg = inst[2]
+                vec_ptr = self.get_val(inst[3])
+                
+                if vec_ptr < 10000:
+                    print("Runtime Error: Invalid vector pointer for vtos")
+                    sys.exit(1)
+                
+                size_addr = vec_ptr - 1
+                size = self.memory[size_addr]
+                
+                res_str = "["
+                for i in range(size):
+                    val = self.memory[vec_ptr + i]
+                    if val >= 20000:
+                         str_ptr = val
+                         while True:
+                            char_val = self.memory[str_ptr]
+                            if char_val == 0 or char_val is None: break
+                            res_str += chr(char_val)
+                            str_ptr += 1
+                    else:
+                        res_str += str(val)
+
+                    if i < size - 1:
+                        res_str += ", "
+                res_str += "]"
+                
+                ptr = self.heap_ptr
+                self.set_reg(dst_reg, ptr)
+                for char in res_str:
+                    self.memory[self.heap_ptr] = ord(char)
+                    self.heap_ptr += 1
+                self.memory[self.heap_ptr] = 0
+                self.heap_ptr += 1
+
+            elif target == 'sconcat':
+                dst_reg = inst[2]
+                left_ptr = self.get_val(inst[3])
+                right_ptr = self.get_val(inst[4])
+
+                def read_c_string(ptr):
+                    chars = []
+                    while 0 <= ptr < len(self.memory):
+                        val = self.memory[ptr]
+                        if val is None or val == 0:
+                            break
+                        chars.append(val)
+                        ptr += 1
+                    return chars
+
+                left_chars = read_c_string(left_ptr)
+                right_chars = read_c_string(right_ptr)
+
+                start = self.heap_ptr
+                for val in left_chars + right_chars:
+                    self.memory[self.heap_ptr] = val
+                    self.heap_ptr += 1
+                self.memory[self.heap_ptr] = 0
+                self.heap_ptr += 1
+
+                self.set_reg(dst_reg, start)
+            
             else:
                 ret_addr = self.ip + 1
                 self.registers['sp'] -= 1

@@ -135,6 +135,8 @@ class SemanticChecker:
                 left = self._get_type(expr.left)
                 right = self._get_type(expr.right)
                 if expr.op in ['+', '-', '*', '/']:
+                    if expr.op == '+':
+                        if left == 'string' or right == 'string': return 'string'
                     if left == 'int' and right == 'int': return 'int'
                 elif expr.op in ['&&', '||']:
                     if left == 'bool' and right == 'bool': return 'bool'
@@ -366,10 +368,16 @@ class SemanticChecker:
                 kind = "global_var" 
             
             if var_type == 'vector':
+                size = self._get_vector_size(value)
+                element_types = self._get_element_types(value)
+                
+                if isinstance(node.value, ListNode) and size is not None:
+                    element_types = ['unknown'] * size
+                
                 self.symbol_table[node.name] = {
                     "kind": kind, "var_type": var_type, "initialized": initialized,
-                    "size": self._get_vector_size(value),
-                    "element_types": self._get_element_types(value)
+                    "size": size,
+                    "element_types": element_types
                 }
             else:
                 value_to_store = None
@@ -445,6 +453,13 @@ class SemanticChecker:
             elif is_vec_access and vtype != "vector":
                  self.error(f"Cannot index variable '{varname}' which is not a vector.")
             else:
+                if is_vec_access:
+                    idx = self._get_constant_int(varname_or_node.index)
+                    if isinstance(idx, int) and 'element_types' in varinfo:
+                        element_types = varinfo['element_types']
+                        if 0 <= idx < len(element_types):
+                            element_types[idx] = exprtype
+                        
                 varinfo['initialized'] = True
             
             return
@@ -490,7 +505,7 @@ class SemanticChecker:
                 self.visit(node.returnVar)
                 rv_type = self._get_type(node.returnVar)
             
-            if expected_type != rv_type and rv_type != "unknown":
+            if expected_type != rv_type:
                 self.error(
                     f"Function '{self.current_function.name}' should return '{expected_type}', but returned '{rv_type}'"
                 )

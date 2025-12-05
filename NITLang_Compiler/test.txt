@@ -47,26 +47,28 @@ func main() <int> {
     let x: int = 10;
     let y: int = 20;
 
-    print(x);      # Expected: 10
-    print(y);      # Expected: 20
-    print(x + y);  # Expected: 30
-    print(y - x);  # Expected: 10
-    print(x * y);  # Expected: 200
-    print(y / 2);  # Expected: 10
+    print("x is: " + x);            # Expected: 10
+    print("y is: " + y);            # Expected: 20
+    print("x + y is: " + (x + y));  # Expected: 30
+    print("y - x is: " + (y - x));  # Expected: 10
+    print("x * y is: " + (x * y));  # Expected: 200
+    print("y / 2 is: " + (y / 2));  # Expected: 10
 
     # Overwrite variables
     x = 5;
     y = x + 2 + 3 * 4;
-    print(y);      # Expected: 19
+    print("x is: " + x);      # Expected: 5
+    print("y = x + 2 + 3 * 4;");
+    print("y is: " + y);      # Expected: 19
 
     print("==================== Step 2 Tests ===================="); # Start Step 2: Functions (Recursion)
 
-    print(fact(5)); # Expected: 120
+    print("fact(5): " + fact(5)); # Expected: 120
 
     print("==================== Step 3 Tests ===================="); # Start Step 3: Scope
 
-    print(scope_test()); # Expected: 21 (local var = 20 + 1)
-    print(var);          # Expected: 10 (global var unchanged)
+    print("scope_test(): " + scope_test()); # Expected: 21 (local var = 20 + 1)
+    print("var: " + var);          # Expected: 10 (global var unchanged)
 
     print("==================== Step 4 Tests ===================="); # Start Step 4: References
 
@@ -76,13 +78,13 @@ func main() <int> {
     let ptr: ref = ref a;
     
     # Expected output: 50
-    print(a);
+    print("a: " + a);
     
     # Modify 'a' through 'ptr' using assignment operator :=
     ptr := 100;
     
     # Expected output: 100 (proving 'a' was modified)
-    print(a);
+    print("a after modified through ptr: " + a);
 
 
     print("==================== Step 5 Tests ===================="); # Start Step 5: Types
@@ -90,9 +92,9 @@ func main() <int> {
     # --- Step 5: Types ---
     # Using the booleans declared above [cite: 99]
     if is_active then {
-        print(1); # Expected
+        print("is_active is " + is_active + " so it is true"); # Expected
     } else {
-        print(0);
+        print("is_active is " + is_active + " so it is false");
     }
 
 
@@ -106,7 +108,7 @@ func main() <int> {
     c.add(5);
     
     # Expected output: 20
-    print(c.get());
+    print("c of class Counter is: " + c.get());
 
 
     print("==================== Step 7 Tests ===================="); # Start Step 7: Functional
@@ -114,25 +116,32 @@ func main() <int> {
     # --- Step 7: Functional Features ---
     # Higher-order functions (map) and Lambda expressions [cite: 112-114, 170]
     let nums: vector = [1, 2, 3, 4];
+
+    # Expected output: 4 (length)
+    print("length of nums: " + length(nums));
+
+    # Expected output: [1, 2, 3, 4]
+    print("nums: " + nums);
     
     # Apply lambda: x -> x * 10
     let scaled = map(lambda x -> x * 10, nums);
     
     # Verify results
     # Expected output: 4 (length)
-    print(length(scaled));
+    let temp = "length of scaled: " + length(scaled);
+    print(temp);
+
+    # Expected output: [10, 20, 30, 40]
+    print("scaled: " + scaled);
     
     # Expected output: 10
-    print(scaled[0]);
+    print("scaled[0]: " + scaled[0]);
     # Expected output: 20
-    print(scaled[1]);
+    print("scaled[1]: " + scaled[1]);
+    # Expected output: 30
+    print("scaled[2]: " + scaled[2]);
     # Expected output: 40
-    print(scaled[3]);
-
-    # Expected output: [1, 2, 3, 4]
-    print(nums);
-    # Expected output: [10, 20, 30, 40]
-    print(scaled);
+    print("scaled[3]: " + scaled[3]);
 
     print("====================  End Tests  ===================="); # End Tests
     return 0;
