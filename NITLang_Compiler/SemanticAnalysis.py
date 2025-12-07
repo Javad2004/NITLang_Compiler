@@ -87,6 +87,12 @@ class SemanticChecker:
     def _get_vector_size(self, value):
         if value is None:
             return None
+        
+        if isinstance(value, str):
+            if value in self.symbol_table:
+                return self.symbol_table[value].get('size')
+            return None
+
         if hasattr(value, 'elements'):
             return len(value.elements)
         if hasattr(value, 'size'):
@@ -223,7 +229,13 @@ class SemanticChecker:
                 arrinfo = self.symbol_table.get(arrname)
                 if arrinfo and arrinfo['var_type'] == "vector":
                     if arrinfo.get('kind') == 'param': return 'int'
+                    
                     idx = self._get_constant_int(expr.index)
+                    
+                    if isinstance(idx, int) and arrinfo.get('size') is not None:
+                         if idx < 0 or idx >= arrinfo['size']:
+                             return "unknown"
+                             
                     if 'element_types' in arrinfo and isinstance(idx, int):
                         if 0 <= idx < len(arrinfo['element_types']):
                             return arrinfo['element_types'][idx]

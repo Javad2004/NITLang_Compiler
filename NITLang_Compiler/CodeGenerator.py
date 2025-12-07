@@ -247,21 +247,25 @@ class CodeGenerator:
             offset = self.fp_offset
             
             extra_info = {}
-            if node.var_type == 'vector' and isinstance(node.value, VectorNode):
-                types = []
-                for e in node.value.elements:
-                    if isinstance(e, int): 
-                        types.append('int')
-                    elif isinstance(e, str):
-                        if e.startswith('"') or e.startswith("'"): 
-                            types.append('string')
-                        elif e in self.var_map: 
-                            types.append(self.var_map[e].get('var_type', 'unknown'))
+            if node.var_type == 'vector':
+                if isinstance(node.value, VectorNode):
+                    types = []
+                    for e in node.value.elements:
+                        if isinstance(e, int): 
+                            types.append('int')
+                        elif isinstance(e, str):
+                            if e.startswith('"') or e.startswith("'"): 
+                                types.append('string')
+                            elif e in self.var_map: 
+                                types.append(self.var_map[e].get('var_type', 'unknown'))
+                            else: 
+                                types.append('unknown')
                         else: 
                             types.append('unknown')
-                    else: 
-                        types.append('unknown')
-                extra_info['element_types'] = types
+                    extra_info['element_types'] = types
+                elif isinstance(node.value, ListNode):
+                    if isinstance(node.value.size, int):
+                         extra_info['element_types'] = ['unknown'] * node.value.size
 
             self.var_map[node.name] = {'scope': 'local', 'offset': offset, 'var_type': node.var_type, **extra_info}
             self.fp_offset += 1
@@ -287,6 +291,16 @@ class CodeGenerator:
             self.emit(f"add r{addr_reg}, r{array_ptr_reg}, r{index_reg}")
             self.emit(f"st [r{addr_reg}], r{value_reg}")
             
+            arr_name = node.var.array_name
+            if isinstance(arr_name, str) and arr_name in self.var_map:
+                 if 'element_types' in self.var_map[arr_name]:
+                     idx = node.var.index
+                     if isinstance(idx, int):
+                         try:
+                             self.var_map[arr_name]['element_types'][idx] = value_type
+                         except IndexError:
+                             pass
+
         elif isinstance(node.var, FieldAccessNode):
             obj_ptr_reg, obj_type = self.visit(node.var.object_expr)
             
