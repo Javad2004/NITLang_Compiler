@@ -245,7 +245,25 @@ class CodeGenerator:
                 self.emit(f"st [r{addr_reg}], r{value_reg}")
         else:
             offset = self.fp_offset
-            self.var_map[node.name] = {'scope': 'local', 'offset': offset, 'var_type': node.var_type}
+            
+            extra_info = {}
+            if node.var_type == 'vector' and isinstance(node.value, VectorNode):
+                types = []
+                for e in node.value.elements:
+                    if isinstance(e, int): 
+                        types.append('int')
+                    elif isinstance(e, str):
+                        if e.startswith('"') or e.startswith("'"): 
+                            types.append('string')
+                        elif e in self.var_map: 
+                            types.append(self.var_map[e].get('var_type', 'unknown'))
+                        else: 
+                            types.append('unknown')
+                    else: 
+                        types.append('unknown')
+                extra_info['element_types'] = types
+
+            self.var_map[node.name] = {'scope': 'local', 'offset': offset, 'var_type': node.var_type, **extra_info}
             self.fp_offset += 1
             
             if node.value is not None:
@@ -637,36 +655,64 @@ class CodeGenerator:
         lambda_node = node.lambda_node
         list_expr_node = node.list_expr
         
-        lambda_func_name = self.new_label() + "_lambda"
-        lambda_end_label = self.new_label() + "_end" 
-        
-        self.emit(f"br {lambda_end_label}")
+        element_types = []
+        if isinstance(list_expr_node, str):
+            if list_expr_node in self.var_map:
+                element_types = self.var_map[list_expr_node].get('element_types', [])
+            elif list_expr_node in self.global_symbol_table:
+                element_types = self.global_symbol_table[list_expr_node].get('element_types', [])
+
+        if not element_types:
+            element_types = ['int']
+
+        non_unknown_types = [t for t in element_types if t != 'unknown']
+
+        unique_types = set(non_unknown_types)
+        if not unique_types:
+            unique_types = {'int'}
+
+        type_label_map = {}
         
         old_var_map = self.var_map
         old_fp_offset = self.fp_offset
         old_func = self.current_function
         
-        self.var_map = {}
-        self.fp_offset = 1
-        self.current_function = lambda_node
-        
-        self.emit(f"proc {lambda_func_name}")
-        self.emit("push fp"); self.emit("mov fp, sp")
-        self.var_map[lambda_node.param] = {'scope': 'param', 'offset': 2, 'var_type': 'int'}
-        
-        body_reg, _ = self.visit(lambda_node.body)
-        
-        self.emit(f"mov r0, r{body_reg}") 
-        self.emit("pop fp"); self.emit("ret")
-        
+        for t in unique_types:
+            lambda_func_name = self.new_label() + f"_lambda_{t}"
+            type_label_map[t] = lambda_func_name
+            lambda_end_label = self.new_label() + f"_end_{t}"
+
+            self.emit(f"br {lambda_end_label}")
+            
+            self.var_map = {}
+            self.fp_offset = 1
+            self.current_function = lambda_node
+            
+            self.emit(f"proc {lambda_func_name}")
+            self.emit("push fp")
+            self.emit("mov fp, sp")
+            
+            self.var_map[lambda_node.param] = {
+                'scope': 'param',
+                'offset': 2,
+                'var_type': t
+            }
+            
+            body_reg, _ = self.visit(lambda_node.body)
+            
+            self.emit(f"mov r0, r{body_reg}") 
+            self.emit("pop fp")
+            self.emit("ret")
+            
+            self.emit(f"{lambda_end_label}:")
+
         self.var_map = old_var_map
         self.fp_offset = old_fp_offset
         self.current_function = old_func
 
-        self.emit(f"{lambda_end_label}:")
-
         list_ptr_reg, _ = self.visit(list_expr_node)
-        one_reg = self.new_register(); self.emit(f"mov r{one_reg}, 1")
+        one_reg = self.new_register()
+        self.emit(f"mov r{one_reg}, 1")
 
         size_reg = self.new_register()
         base_ptr_reg = self.new_register()
@@ -681,27 +727,57 @@ class CodeGenerator:
         new_list_ptr_reg = self.new_register()
         self.emit(f"add r{new_list_ptr_reg}, r{new_list_base_ptr}, r{one_reg}")
 
-        i_reg = self.new_register(); self.emit(f"mov r{i_reg}, 0")
-        loop_start = self.new_label(); loop_end = self.new_label()
+        i_reg = self.new_register()
+        self.emit(f"mov r{i_reg}, 0")
+        loop_start = self.new_label()
+        loop_end = self.new_label()
         
         self.emit(f"{loop_start}:")
         cond_reg = self.new_register()
         self.emit(f"cmp>= r{cond_reg}, r{i_reg}, r{size_reg}")
         self.emit(f"bnz r{cond_reg}, {loop_end}")
 
-        addr_reg = self.new_register()
-        self.emit(f"add r{addr_reg}, r{list_ptr_reg}, r{i_reg}")
         elem_reg = self.new_register()
         self.emit(f"call vget, r{elem_reg}, r{list_ptr_reg}, r{i_reg}")
         
-        regs_to_save = [i for i in range(1, self.next_register)]
+        regs_to_save = [r for r in range(1, self.next_register)]
         for r in regs_to_save:
             self.emit(f"push r{r}")
 
         self.emit(f"push r{elem_reg}")
-        self.emit(f"call {lambda_func_name}")
-        result_reg = self.new_register(); self.emit(f"mov r{result_reg}, r0")
-        pop_reg = self.new_register(); self.emit(f"mov r{pop_reg}, 1")
+        
+        result_reg = self.new_register()
+        dispatch_end = self.new_label()
+
+        if len(set(non_unknown_types)) <= 1:
+            default_type = next(iter(unique_types))
+            target_func = type_label_map[default_type]
+            self.emit(f"call {target_func}")
+            self.emit(f"mov r{result_reg}, r0")
+        else:
+            for idx, t in enumerate(element_types):
+                if t not in type_label_map:
+                    continue
+                
+                target_func = type_label_map[t]
+                next_check = self.new_label()
+                
+                idx_check_reg = self.new_register()
+                self.emit(f"mov r{idx_check_reg}, {idx}")
+                cmp_idx_reg = self.new_register()
+                self.emit(f"cmp!= r{cmp_idx_reg}, r{i_reg}, r{idx_check_reg}")
+                self.emit(f"bnz r{cmp_idx_reg}, {next_check}")
+                
+                self.emit(f"call {target_func}")
+                self.emit(f"mov r{result_reg}, r0")
+                self.emit(f"br {dispatch_end}")
+                
+                self.emit(f"{next_check}:")
+
+        self.emit(f"{dispatch_end}:")
+
+        pop_reg = self.new_register()
+        self.emit(f"mov r{pop_reg}, 1")
         self.emit(f"add sp, sp, r{pop_reg}")
 
         for r in reversed(regs_to_save):

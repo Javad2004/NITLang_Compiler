@@ -91,11 +91,54 @@ class SemanticChecker:
             return len(value.elements)
         if hasattr(value, 'size'):
             return self._get_constant_int(value.size)
+        if isinstance(value, MapNode):
+            return self._get_vector_size(value.list_expr)
         return None
         
     def _get_element_types(self, value):
         if hasattr(value, 'elements'):
             return [self._get_type(elem) for elem in value.elements]
+            
+        if isinstance(value, MapNode):
+            source_types = []
+            
+            if isinstance(value.list_expr, str):
+                info = self.symbol_table.get(value.list_expr)
+                if info and 'element_types' in info:
+                    source_types = info['element_types']
+            elif isinstance(value.list_expr, VectorNode):
+                source_types = [self._get_type(e) for e in value.list_expr.elements]
+            
+            if not source_types:
+                size = self._get_vector_size(value.list_expr)
+                if size is not None:
+                    source_types = ['unknown'] * size
+                else:
+                    return []
+
+            result_types = []
+            param_name = value.lambda_node.param
+
+            old_entry = self.symbol_table.get(param_name)
+            
+            for t in source_types:
+                self.symbol_table[param_name] = {
+                    'kind': 'param', 
+                    'var_type': t, 
+                    'initialized': True
+                }
+
+                res_t = self._get_type(value.lambda_node.body)
+                result_types.append(res_t)
+
+            if old_entry: 
+                self.symbol_table[param_name] = old_entry
+            else: 
+                if param_name in self.symbol_table: 
+                    del self.symbol_table[param_name]
+                
+            return result_types
+            
         return []
 
     def _is_int_literal(self, v):
@@ -132,18 +175,35 @@ class SemanticChecker:
     def _get_type(self, expr):
         if isinstance(expr, ASTNode):
             if isinstance(expr, BinaryOperation):
-                left = self._get_type(expr.left)
-                right = self._get_type(expr.right)
-                if expr.op in ['+', '-', '*', '/']:
-                    if expr.op == '+':
-                        if left == 'string' or right == 'string': return 'string'
-                    if left == 'int' and right == 'int': return 'int'
-                elif expr.op in ['&&', '||']:
-                    if left == 'bool' and right == 'bool': return 'bool'
+                left_type = self._get_type(expr.left)
+                right_type = self._get_type(expr.right)
+                
+                is_numeric = lambda t: t in ('int', 'bool', 'ref')
+                is_concatenable = lambda t: t in ('string', 'int', 'bool', 'vector', 'null')
+
+                if expr.op == '+':
+                    if left_type == 'string' or right_type == 'string':
+                        if is_concatenable(left_type) and is_concatenable(right_type):
+                            return 'string'
+                    if is_numeric(left_type) and is_numeric(right_type):
+                        return 'int'
+                        
+                if expr.op in ['-', '*', '/']:
+                    if is_numeric(left_type) and is_numeric(right_type):
+                        return 'int'
+
                 elif expr.op in ['==', '!=', '<', '<=', '>', '>=']:
-                    if left in ('int', 'bool') and right in ('int', 'bool'):
+                    if is_numeric(left_type) and is_numeric(right_type):
                         return 'bool'
+                    if left_type == 'string' and right_type == 'string':
+                        return 'bool'
+                        
+                elif expr.op in ['&&', '||']:
+                    if left_type == 'bool' and right_type == 'bool':
+                        return 'bool'
+                        
                 return 'unknown'
+            
             elif isinstance(expr, SingleOperation):
                 sub_type = self._get_type(expr.right)
                 if expr.op == '!' and sub_type == 'bool': return 'bool'
@@ -258,6 +318,44 @@ class SemanticChecker:
         if isinstance(node, BinaryOperation):
             self.visit(node.left)
             self.visit(node.right)
+            
+            left_type = self._get_type(node.left)
+            right_type = self._get_type(node.right)
+
+            def is_numeric_arithmetic(t):
+                return t in ('int', 'bool', 'ref')
+
+            def is_concatenable(t):
+                return t in ('string', 'int', 'bool', 'vector', 'null')
+
+            if node.op in ['+', '-', '*', '/']:
+                
+                if node.op == '+':
+                    if left_type == 'string' or right_type == 'string':
+                        if not is_concatenable(left_type) or not is_concatenable(right_type):
+                            self.error(f"Cannot concatenate type '{left_type}' with '{right_type}'")
+                        return
+
+                    if not is_numeric_arithmetic(left_type) or not is_numeric_arithmetic(right_type):
+                        self.error(f"Cannot use '{node.op}' operator for arithmetic with non-numeric types: {left_type} and {right_type}.")
+                        return
+                
+                elif node.op in ['-', '*', '/']:
+                    if not is_numeric_arithmetic(left_type) or not is_numeric_arithmetic(right_type):
+                        self.error(f"Cannot use '{node.op}' operator with non-numeric types: {left_type} and {right_type}.")
+                        return
+
+            if node.op in ['==', '!=', '<', '<=', '>', '>=']:
+                is_numeric = is_numeric_arithmetic
+                if not ((is_numeric(left_type) and is_numeric(right_type)) or (left_type == 'string' and right_type == 'string')):
+                     self.error(f"Cannot compare types: {left_type} and {right_type}.")
+                     return
+
+            if node.op in ['&&', '||']:
+                if left_type != 'bool' or right_type != 'bool':
+                    self.error(f"Logical operators ('{node.op}') require boolean types, got {left_type} and {right_type}.")
+                    return
+
             return
         
         if isinstance(node, SingleOperation):
@@ -687,16 +785,44 @@ class SemanticChecker:
             return
 
         if isinstance(node, MapNode):
-            self.visit(node.lambda_node)
             self.visit(node.list_expr)
             
             func_type = self._get_type(node.lambda_node)
             if func_type != "function":
                 self.error(f"Argument 1 for 'map' must be a lambda, got {func_type}")
+                return
                 
             list_type = self._get_type(node.list_expr)
             if list_type != "vector":
                 self.error(f"Argument 2 for 'map' must be a vector, got {list_type}")
+                return
+            
+            var_name = node.list_expr if isinstance(node.list_expr, str) else None
+            arrinfo = self.symbol_table.get(var_name) if var_name else None
+            
+            element_types = []
+            if arrinfo and 'element_types' in arrinfo:
+                element_types = [t for t in arrinfo['element_types'] if t != 'unknown']
+            
+            if not element_types:
+                unique_input_types = {'int', 'string'}
+            else:
+                unique_input_types = set(element_types)
+            
+            lambda_node = node.lambda_node
+            param_name = lambda_node.param
+            
+            original_symbol_table = copy.deepcopy(self.symbol_table)
+            
+            for input_type in unique_input_types:
+                self.symbol_table[param_name] = {
+                    "kind": "param", "var_type": input_type, "initialized": True
+                }
+                
+                self.visit(lambda_node.body)
+
+            self.symbol_table = original_symbol_table
+
             return
 
         # -------- DEFAULT: traverse children if any --------
