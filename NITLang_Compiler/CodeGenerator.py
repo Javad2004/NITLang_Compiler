@@ -319,6 +319,14 @@ class CodeGenerator:
     def visit_RefAssignmentNode(self, node):
         value_reg, value_type = self.visit(node.value)
         ptr_reg, _ = self.visit(node.ref_var)
+        
+        valid_addr_label = self.new_label()
+        self.emit(f"bnz r{ptr_reg}, {valid_addr_label}")
+        exit_code_reg = self.new_register()
+        self.emit(f"mov r{exit_code_reg}, 1 # Null Pointer Assignment")
+        self.emit(f"call exit, r{exit_code_reg}")
+        self.emit(f"{valid_addr_label}:")
+
         self.emit(f"st [r{ptr_reg}], r{value_reg}")
         return value_reg, value_type
 
@@ -374,18 +382,34 @@ class CodeGenerator:
     def visit_SingleOperation(self, node):
         operand_reg, operand_type = self.visit(node.right)
         result_reg = self.new_register()
-        return_type = "unknown"
         
         if node.op == '-':
-            zero_reg = self.new_register(); self.emit(f"mov r{zero_reg}, 0")
+            zero_reg = self.new_register()
+            self.emit(f"mov r{zero_reg}, 0")
             self.emit(f"sub r{result_reg}, r{zero_reg}, r{operand_reg}")
-            return_type = "int"
-        elif node.op == '!':
-            zero_reg = self.new_register(); self.emit(f"mov r{zero_reg}, 0")
-            self.emit(f"cmp== r{result_reg}, r{operand_reg}, r{zero_reg}")
-            return_type = "bool"
+            return result_reg, "int"
             
-        return result_reg, return_type
+        elif node.op == '!':
+            if operand_type == "ref" or operand_type.startswith("ref_"):
+                
+                valid_addr_label = self.new_label()
+                self.emit(f"bnz r{operand_reg}, {valid_addr_label}")
+                exit_code_reg = self.new_register()
+                self.emit(f"mov r{exit_code_reg}, 1 # Null Pointer Dereference")
+                self.emit(f"call exit, r{exit_code_reg}")
+                self.emit(f"{valid_addr_label}:")
+                
+                self.emit(f"ld r{result_reg}, [r{operand_reg}]")
+                
+                return_type = operand_type.split("_", 1)[1] if "_" in operand_type else "int"
+                return result_reg, return_type
+            else:
+                zero_reg = self.new_register()
+                self.emit(f"mov r{zero_reg}, 0")
+                self.emit(f"cmp== r{result_reg}, r{operand_reg}, r{zero_reg}")
+                return result_reg, "bool"
+                
+        return result_reg, "unknown"
 
     def visit_FunctionCallNode(self, node):
         if node.name == 'print':

@@ -86,6 +86,9 @@ func main() <int> {
     # Expected output: 100 (proving 'a' was modified)
     print("a after modified through ptr: " + a);
 
+    # Dereference 'ptr' to get value
+    print("Value at ptr: " + !ptr); # Expected: 100
+
 
     print("==================== Step 5 Tests ===================="); # Start Step 5: Types
     

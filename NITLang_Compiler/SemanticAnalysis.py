@@ -212,8 +212,15 @@ class SemanticChecker:
             
             elif isinstance(expr, SingleOperation):
                 sub_type = self._get_type(expr.right)
-                if expr.op == '!' and sub_type == 'bool': return 'bool'
-                elif expr.op in ['+', '-'] and sub_type == 'int': return 'int'
+                if expr.op == '!':
+                    if sub_type == 'ref' or sub_type.startswith('ref'):
+                        if isinstance(expr.right, str) and expr.right in self.symbol_table:
+                            return self.symbol_table[expr.right].get('points_to_type', 'unknown')
+                        return 'unknown'
+                    elif sub_type == 'bool': 
+                        return 'bool'
+                elif expr.op in ['+', '-'] and sub_type == 'int': 
+                    return 'int'
                 return 'unknown'
             elif isinstance(expr, VariableDeclarationNode):
                 return expr.var_type
